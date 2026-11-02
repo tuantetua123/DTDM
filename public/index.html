@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Danh sach cong viec</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 600px; margin: 30px auto; padding: 0 12px; }
+  h1 { text-align: center; }
+  .row { display: flex; gap: 8px; margin-bottom: 12px; }
+  input[type=text] { flex: 1; padding: 8px; font-size: 16px; }
+  button { padding: 8px 12px; cursor: pointer; }
+  li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #ddd; }
+  li span { flex: 1; }
+  li.done span { text-decoration: line-through; color: #888; }
+  ul { list-style: none; padding: 0; }
+</style>
+</head>
+<body>
+<h1>Danh sach cong viec</h1>
+<div class="row">
+  <input id="name" type="text" placeholder="Nhap cong viec moi...">
+  <button onclick="addItem()">Them</button>
+</div>
+<div class="row">
+  <input id="search" type="text" placeholder="Tim kiem..." oninput="load()">
+</div>
+<ul id="list"></ul>
+<script>
+async function load() {
+  const q = document.getElementById('search').value;
+  const res = await fetch('/items?q=' + encodeURIComponent(q));
+  const items = await res.json();
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  items.forEach(it => {
+    const li = document.createElement('li');
+    if (it.done) li.className = 'done';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = it.done;
+    cb.onchange = () => update(it.id, { done: cb.checked });
+    const span = document.createElement('span');
+    span.textContent = it.name;
+    const edit = document.createElement('button');
+    edit.textContent = 'Sua';
+    edit.onclick = () => {
+      const n = prompt('Ten moi:', it.name);
+      if (n && n.trim()) update(it.id, { name: n.trim() });
+    };
+    const del = document.createElement('button');
+    del.textContent = 'Xoa';
+    del.onclick = async () => {
+      if (confirm('Xoa cong viec nay?')) {
+        await fetch('/items/' + it.id, { method: 'DELETE' });
+        load();
+      }
+    };
+    li.append(cb, span, edit, del);
+    list.appendChild(li);
+  });
+}
+async function addItem() {
+  const input = document.getElementById('name');
+  if (!input.value.trim()) return;
+  await fetch('/items', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: input.value })
+  });
+  input.value = '';
+  load();
+}
+async function update(id, data) {
+  await fetch('/items/' + id, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  load();
+}
+document.getElementById('name').addEventListener('keydown', e => { if (e.key === 'Enter') addItem(); });
+load();
+</script>
+</body>
+</html>
