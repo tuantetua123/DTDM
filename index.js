@@ -1,9 +1,12 @@
 require('dotenv').config();
 const express = require('express');
 const pool = require('./db');
+const { performance } = require('node:perf_hooks');
+const instance = require('node:crypto').randomUUID();
 
 const app = express();
 app.use(express.json());
+app.disable('x-powered-by');
 app.use(express.static('public'));
 
 const COLS = "id, name, done, priority, category, to_char(due_date,'YYYY-MM-DD') AS due_date, created_at";
@@ -25,7 +28,19 @@ const FIELDS = ['name', 'done', 'priority', 'due_date', 'category'];
   } catch (e) { console.error(e); }
 })();
 
+// Public demo metrics: no hostnames, credentials or environment variables.
+app.get('/health', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const start = performance.now();
+  let database = false;
+  try { await pool.query({text:'SELECT 1', query_timeout:3000}); database = true; } catch (_) {}
+  res.status(database ? 200 : 503).json({server:true, database, databaseMs:database ? Math.round(performance.now()-start) : null,
+    uptime:Math.floor(process.uptime()),
+    instance:instance.slice(0,8), timestamp:new Date().toISOString()});
+});
+
 app.get('/items', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
     const { rows } = await pool.query(`SELECT ${COLS} FROM items ORDER BY id DESC`);
     res.json(rows);
@@ -96,4 +111,11 @@ app.delete('/items/:id', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Running on port ${PORT}`));
+
+if (!process.env.VERCEL) {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}
+
+module.exports = app;
