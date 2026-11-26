@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: cloud-taskflow
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: NODE_VERSION
+        value: 22.16.0

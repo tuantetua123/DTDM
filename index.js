@@ -1,4 +1,3 @@
-require('dotenv').config();
 const express = require('express');
 const pool = require('./db');
 const { performance } = require('node:perf_hooks');
@@ -7,26 +6,37 @@ const instance = require('node:crypto').randomUUID();
 const app = express();
 app.use(express.json());
 app.disable('x-powered-by');
-app.use(express.static('public'));
+app.use(express.static(require('node:path').join(__dirname, 'public')));
 
 const COLS = "id, name, done, priority, category, to_char(due_date,'YYYY-MM-DD') AS due_date, created_at";
 const FIELDS = ['name', 'done', 'priority', 'due_date', 'category'];
 
-(async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS items (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`);
-    await pool.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS done BOOLEAN DEFAULT FALSE');
-    await pool.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS priority INT DEFAULT 2');
-    await pool.query("ALTER TABLE items ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'personal'");
-    await pool.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS due_date DATE');
-    console.log('Database ready');
-  } catch (e) { console.error(e); }
-})();
+let schemaReady;
+function ensureSchema() {
+  if (!schemaReady) schemaReady = (async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(734210)');
+      await client.query(`CREATE TABLE IF NOT EXISTS items (
+        id SERIAL PRIMARY KEY, name TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW())`);
+      await client.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS done BOOLEAN DEFAULT FALSE');
+      await client.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS priority INT DEFAULT 2');
+      await client.query("ALTER TABLE items ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'personal'");
+      await client.query('ALTER TABLE items ADD COLUMN IF NOT EXISTS due_date DATE');
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally { client.release(); }
+  })().catch(err => { schemaReady = undefined; throw err; });
+  return schemaReady;
+}
+app.use('/items', async (req, res, next) => {
+  try { await ensureSchema(); next(); }
+  catch (err) { console.error(err.message); res.status(503).json({error:'Database unavailable'}); }
+});
 
 // Public demo metrics: no hostnames, credentials or environment variables.
 app.get('/health', async (req, res) => {
@@ -36,7 +46,7 @@ app.get('/health', async (req, res) => {
   try { await pool.query({text:'SELECT 1', query_timeout:3000}); database = true; } catch (_) {}
   res.status(database ? 200 : 503).json({server:true, database, databaseMs:database ? Math.round(performance.now()-start) : null,
     uptime:Math.floor(process.uptime()),
-    instance:instance.slice(0,8), timestamp:new Date().toISOString()});
+    platform:process.env.VERCEL ? 'Vercel' : process.env.RENDER ? 'Render' : 'Local', instance:instance.slice(0,8), timestamp:new Date().toISOString()});
 });
 
 app.get('/items', async (req, res) => {
@@ -111,11 +121,7 @@ app.delete('/items/:id', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-
-if (!process.env.VERCEL) {
-    app.listen(PORT, '0.0.0.0', () => {
-        console.log(`Server running on port ${PORT}`);
-    });
+if (require.main === module && !process.env.VERCEL) {
+  app.listen(PORT, '0.0.0.0', () => console.log(`Running on port ${PORT}`));
 }
-
 module.exports = app;
